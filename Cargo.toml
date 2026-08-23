@@ -1,0 +1,13 @@
+[package]
+name = "haul"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "An asynchronous TCP networking library utilizing Tokio and length-prefixed framing."
+
+[dependencies]
+async-trait = "0.1"
+tokio = { version = "1.0", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1.0"
+futures = "0.3"
