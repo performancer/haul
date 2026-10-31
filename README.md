@@ -19,20 +19,22 @@ An asynchronous networking library for Rust.
 ```rust
 use haul::{DecoderTrait, EncoderTrait};
 
+#[derive(Clone)]
 struct MyDecoder;
 impl DecoderTrait for MyDecoder {
     type Inbound = String;
-    type Error = String;
+    type Error = std::string::FromUtf8Error;
 
     fn decode(&mut self, data: &[u8]) -> Result<Self::Inbound, Self::Error> {
-        String::from_utf8(data.to_vec()).map_err(|e| e.to_string())
+        String::from_utf8(data.to_vec())
     }
 }
 
+#[derive(Clone)]
 struct MyEncoder;
 impl EncoderTrait for MyEncoder {
     type Outbound = String;
-    type Error = String;
+    type Error = std::convert::Infallible;
 
     fn encode(&mut self, packet: Self::Outbound) -> Result<Vec<u8>, Self::Error> {
         Ok(packet.into_bytes())
@@ -43,23 +45,20 @@ impl EncoderTrait for MyEncoder {
 2. Start the Server:
 
 ```rust
-use haul::{TcpTransport, Transport, Event};
+use haul::tcp::TcpTransport;
+use haul::{Event, Transport};
 
 #[tokio::main]
 async fn main() {
-    let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(256);
-    let transport = TcpTransport::new(MyDecoder, MyEncoder);
-
-    tokio::spawn(async move {
-        transport.listen("127.0.0.1:8080", inbound_tx).await;
-    });
+    let transport = TcpTransport::new("127.0.0.1:8080", MyDecoder, MyEncoder);
+    let mut inbound_rx = Transport::<_, _, u64>::listen(&transport).await.unwrap();
 
     while let Some(event) = inbound_rx.recv().await {
         match event {
-            Event::Connected(client, _tx) => println!("Client connected: {:?}", client),
+            Event::Connected(client, address, _tx) => println!("Client connected: {:?} at {}", client, address),
             Event::Message(client, msg) => println!("Received from {:?}: {}", client, msg),
             Event::Disconnected(client, address) => println!("Client disconnected: {:?} at {}", client, address),
-            Event::Error(client, address, err) => eprintln!("Error on {:?} ({address}): {}", client, address, err),
+            Event::Error(client, address, err) => eprintln!("Error on {:?} ({}): {}", client, address, err),
         }
     }
 }

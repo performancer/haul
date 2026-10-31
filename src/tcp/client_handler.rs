@@ -4,28 +4,45 @@
 //! single connected TCP client using [`tokio_util::codec::Framed`].
 
 use crate::client::Client;
+use crate::error::ClientError;
 use crate::types::EventSender;
 use crate::{DecoderTrait, EncoderTrait, Event};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{channel, Receiver};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use crate::error::ClientError;
 
 /// Manages the concurrent read/write loop for an individual client connection.
 pub struct ClientHandler<D: DecoderTrait, E: EncoderTrait, C: Client> {
-    pub client: C,
-    pub address: SocketAddr,
-    pub stream: TcpStream,
-    pub decoder: D,
-    pub encoder: E,
-    pub inbound_tx: EventSender<D, E, C>,
-    pub outbound_rx: Receiver<E::Outbound>,
+    client: C,
+    stream: TcpStream,
+    address: SocketAddr,
+    decoder: D,
+    encoder: E,
+    inbound_tx: EventSender<D, E, C>,
 }
 
 impl<D: DecoderTrait, E: EncoderTrait, C: Client> ClientHandler<D, E, C> {
+    pub fn new(
+        client: C,
+        stream: TcpStream,
+        address: SocketAddr,
+        decoder: D,
+        encoder: E,
+        inbound_tx: EventSender<D, E, C>,
+    ) -> Self {
+        ClientHandler {
+            client,
+            stream,
+            address,
+            decoder,
+            encoder,
+            inbound_tx,
+        }
+    }
+
     /// Spawns the handler loop into a detached background Tokio task.
     pub fn start(self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
@@ -37,6 +54,11 @@ impl<D: DecoderTrait, E: EncoderTrait, C: Client> ClientHandler<D, E, C> {
         let client = self.client.clone();
         let address = self.address;
         let inbound_tx = self.inbound_tx.clone();
+
+        let Some(mut outbound_rx) = Self::connect(&client, address, &inbound_tx).await else {
+            return;
+        };
+
         let mut framed = Framed::new(self.stream, LengthDelimitedCodec::new());
 
         loop {
@@ -51,7 +73,7 @@ impl<D: DecoderTrait, E: EncoderTrait, C: Client> ClientHandler<D, E, C> {
                         }
                     }
                 }
-                outbound = self.outbound_rx.recv() => {
+                outbound = outbound_rx.recv() => {
                     match Self::process_outbound(outbound, &mut self.encoder, &mut framed).await {
                         Ok(()) => {}
                         Err(err) => {
@@ -64,6 +86,23 @@ impl<D: DecoderTrait, E: EncoderTrait, C: Client> ClientHandler<D, E, C> {
         }
 
         let _ = inbound_tx.send(Event::Disconnected(client, address)).await;
+    }
+
+    /// Announces the client upstream, returning the receiver for its outbound packets,
+    /// or `None` once the event receiver is dropped.
+    async fn connect(
+        client: &C,
+        address: SocketAddr,
+        inbound_tx: &EventSender<D, E, C>,
+    ) -> Option<Receiver<E::Outbound>> {
+        let (outbound_tx, outbound_rx) = channel(256);
+
+        inbound_tx
+            .send(Event::Connected(client.clone(), address, outbound_tx))
+            .await
+            .ok()?;
+
+        Some(outbound_rx)
     }
 
     async fn process_inbound(
@@ -94,9 +133,6 @@ impl<D: DecoderTrait, E: EncoderTrait, C: Client> ClientHandler<D, E, C> {
         let packet = outbound.ok_or(ClientError::OutboundChannelClosed)?;
         let raw = encoder.encode(packet).map_err(ClientError::Encode)?;
 
-        framed
-            .send(Bytes::from(raw))
-            .await
-            .map_err(ClientError::Io)
+        framed.send(Bytes::from(raw)).await.map_err(ClientError::Io)
     }
 }

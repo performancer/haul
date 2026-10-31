@@ -1,7 +1,7 @@
 use crate::client::Client;
 use crate::error::TransportError;
 use crate::tcp::listener::Listener;
-use crate::types::EventSender;
+use crate::types::EventReceiver;
 use crate::{DecoderTrait, EncoderTrait, Transport};
 use async_trait::async_trait;
 
@@ -33,9 +33,9 @@ impl<D, E> TcpTransport<D, E> {
 
 #[async_trait]
 impl<D: DecoderTrait, E: EncoderTrait, C: Client> Transport<D, E, C> for TcpTransport<D, E> {
-    async fn listen(&self, inbound_tx: EventSender<D, E, C>) -> Result<(), TransportError> {
+    async fn listen(&self) -> Result<EventReceiver<D, E, C>, TransportError> {
         Listener::new(self.decoder.clone(), self.encoder.clone(), self.nodelay)
-            .listen(inbound_tx, &self.address)
+            .listen(&self.address)
             .await
     }
 }

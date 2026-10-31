@@ -3,13 +3,14 @@
 use crate::client::Client;
 use crate::codec::{DecoderTrait, EncoderTrait};
 use crate::error::TransportError;
-use crate::event::Event;
 use crate::tcp::client_handler::ClientHandler;
-use crate::types::EventSender;
+use crate::types::{EventReceiver, EventSender};
 use std::io;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::channel;
+use tokio::time::sleep;
 
 /// Accepts incoming TCP connections and spawns dedicated client worker tasks.
 pub struct Listener<D, E> {
@@ -27,53 +28,67 @@ impl<D: DecoderTrait, E: EncoderTrait> Listener<D, E> {
         }
     }
 
-    /// Binds to the address and runs the connection acceptance loop.
+    /// Binds to the address and spawns the connection acceptance loop.
     pub async fn listen<C: Client>(
-        &self,
-        inbound_tx: EventSender<D, E, C>,
+        self,
         address: &str,
-    ) -> Result<(), TransportError> {
-        let listener = Self::bind(address).await?;
+    ) -> Result<EventReceiver<D, E, C>, TransportError> {
+        let listener = TcpListener::bind(address).await?;
+        let (inbound_tx, inbound_rx) = channel(128);
+
+        tokio::spawn(self.run(listener, inbound_tx));
+
+        Ok(inbound_rx)
+    }
+
+    /// Accepts connections until the event receiver is dropped.
+    async fn run<C: Client>(self, listener: TcpListener, inbound_tx: EventSender<D, E, C>) {
         let mut client_id = 1;
 
         loop {
-            let (stream, address) = self.accept(&listener).await?;
-            let (outbound_tx, outbound_rx) = channel(256);
-            let client: C = client_id.into();
+            let (stream, address) = tokio::select! {
+                accepted = accept(&listener) => accepted,
+                _ = inbound_tx.closed() => return,
+            };
 
-            if inbound_tx
-                .send(Event::Connected(client.clone(), address, outbound_tx))
-                .await
-                .is_err()
-            {
-                return Err(TransportError::ChannelClosed);
-            }
+            // On failure the connection still works, just with Nagle's algorithm on.
+            let _ = stream.set_nodelay(self.nodelay);
 
-            ClientHandler {
-                client,
+            ClientHandler::new(
+                client_id.into(),
                 stream,
                 address,
-                decoder: self.decoder.clone(),
-                encoder: self.encoder.clone(),
-                inbound_tx: inbound_tx.clone(),
-                outbound_rx,
-            }
+                self.decoder.clone(),
+                self.encoder.clone(),
+                inbound_tx.clone(),
+            )
             .start();
 
             client_id += 1;
         }
     }
+}
 
-    async fn bind(address: &str) -> io::Result<TcpListener> {
-        let listener = TcpListener::bind(address).await?;
-        Ok(listener)
+/// Waits for the next connection, retrying past accept errors.
+async fn accept(listener: &TcpListener) -> (TcpStream, SocketAddr) {
+    loop {
+        match listener.accept().await {
+            Ok((stream, address)) => {
+                return (stream, address);
+            }
+            // haul has no logger, so accept errors are retried silently.
+            Err(error) if is_connection_error(&error) => continue,
+            Err(_) => sleep(Duration::from_secs(1)).await,
+        }
     }
+}
 
-    async fn accept(&self, listener: &TcpListener) -> io::Result<(TcpStream, SocketAddr)> {
-        let (stream, address) = listener.accept().await?;
-        // On failure the connection still works, just with Nagle's algorithm on.
-        let _ = stream.set_nodelay(self.nodelay);
-
-        Ok((stream, address))
-    }
+/// Errors that concern only the connection being accepted, not the listener.
+fn is_connection_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionRefused
+    )
 }
