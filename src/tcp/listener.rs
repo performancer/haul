@@ -15,11 +15,16 @@ use tokio::sync::mpsc::channel;
 pub struct Listener<D, E> {
     decoder: D,
     encoder: E,
+    nodelay: bool,
 }
 
 impl<D: DecoderTrait, E: EncoderTrait> Listener<D, E> {
-    pub fn new(decoder: D, encoder: E) -> Self {
-        Listener { decoder, encoder }
+    pub fn new(decoder: D, encoder: E, nodelay: bool) -> Self {
+        Listener {
+            decoder,
+            encoder,
+            nodelay,
+        }
     }
 
     /// Binds to the address and runs the connection acceptance loop.
@@ -32,7 +37,7 @@ impl<D: DecoderTrait, E: EncoderTrait> Listener<D, E> {
         let mut client_id = 1;
 
         loop {
-            let (stream, address) = Self::accept(&listener).await?;
+            let (stream, address) = self.accept(&listener).await?;
             let (outbound_tx, outbound_rx) = channel(256);
             let client: C = client_id.into();
 
@@ -64,8 +69,11 @@ impl<D: DecoderTrait, E: EncoderTrait> Listener<D, E> {
         Ok(listener)
     }
 
-    async fn accept(listener: &TcpListener) -> io::Result<(TcpStream, SocketAddr)> {
+    async fn accept(&self, listener: &TcpListener) -> io::Result<(TcpStream, SocketAddr)> {
         let (stream, address) = listener.accept().await?;
+        // On failure the connection still works, just with Nagle's algorithm on.
+        let _ = stream.set_nodelay(self.nodelay);
+
         Ok((stream, address))
     }
 }

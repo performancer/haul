@@ -10,6 +10,7 @@ An asynchronous networking library for Rust.
 - **Trait-Based Design**: Separated traits for decoding (`DecoderTrait`), encoding (`EncoderTrait`), and transport orchestration (`Transport`).
 - **Concurrent I/O**: Handles inbound and outbound packets concurrently using `tokio::select!`.
 - **Protocol Agnostic**: Designed to support custom application protocols.
+- **Low Latency**: `TCP_NODELAY` is on by default, since small framed messages suffer under Nagle's algorithm. Turn it off with `TcpTransport::new(..).nodelay(false)`.
 
 ## Quick Start
 

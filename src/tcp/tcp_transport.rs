@@ -10,6 +10,7 @@ pub struct TcpTransport<D, E> {
     address: String,
     decoder: D,
     encoder: E,
+    nodelay: bool,
 }
 
 impl<D, E> TcpTransport<D, E> {
@@ -18,14 +19,22 @@ impl<D, E> TcpTransport<D, E> {
             address: address.into(),
             decoder,
             encoder,
+            nodelay: true,
         }
+    }
+
+    /// Sets `TCP_NODELAY` on accepted connections. Defaults to `true`, since
+    /// haul sends small framed messages where Nagle's algorithm adds latency.
+    pub fn nodelay(mut self, nodelay: bool) -> Self {
+        self.nodelay = nodelay;
+        self
     }
 }
 
 #[async_trait]
 impl<D: DecoderTrait, E: EncoderTrait, C: Client> Transport<D, E, C> for TcpTransport<D, E> {
     async fn listen(&self, inbound_tx: EventSender<D, E, C>) -> Result<(), TransportError> {
-        Listener::new(self.decoder.clone(), self.encoder.clone())
+        Listener::new(self.decoder.clone(), self.encoder.clone(), self.nodelay)
             .listen(inbound_tx, &self.address)
             .await
     }
