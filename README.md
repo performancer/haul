@@ -51,7 +51,7 @@ use haul::{Event, Transport};
 #[tokio::main]
 async fn main() {
     let transport = TcpTransport::new("127.0.0.1:8080", MyDecoder, MyEncoder);
-    let mut inbound_rx = Transport::<_, _, u64>::listen(&transport).await.unwrap();
+    let mut inbound_rx = transport.listen::<u64>().await.unwrap();
 
     while let Some(event) = inbound_rx.recv().await {
         match event {
