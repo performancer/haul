@@ -11,6 +11,7 @@ An asynchronous networking library for Rust.
 - **Concurrent I/O**: Handles inbound and outbound packets concurrently using `tokio::select!`.
 - **Protocol Agnostic**: Designed to support custom application protocols.
 - **Low Latency**: `TCP_NODELAY` is on by default, since small framed messages suffer under Nagle's algorithm. Turn it off with `TcpTransport::new(..).nodelay(false)`.
+- **Slow Client Queue**: Each client queues up to 256 outbound messages by default. Change it with `TcpTransport::new(..).outbound_capacity(n)`.
 
 ## Quick Start
 

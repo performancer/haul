@@ -19,6 +19,7 @@ pub struct TcpTransport<D, E> {
     decoder: D,
     encoder: E,
     nodelay: bool,
+    outbound_capacity: usize,
 }
 
 impl<D, E> TcpTransport<D, E> {
@@ -28,6 +29,7 @@ impl<D, E> TcpTransport<D, E> {
             decoder,
             encoder,
             nodelay: true,
+            outbound_capacity: 256,
         }
     }
 
@@ -35,6 +37,17 @@ impl<D, E> TcpTransport<D, E> {
     /// haul sends small framed messages where Nagle's algorithm adds latency.
     pub fn nodelay(mut self, nodelay: bool) -> Self {
         self.nodelay = nodelay;
+        self
+    }
+
+    /// Sets how many outbound messages each client can have queued. Defaults to 256.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `capacity` is 0.
+    pub fn outbound_capacity(mut self, capacity: usize) -> Self {
+        assert!(capacity > 0, "outbound capacity must be greater than 0");
+        self.outbound_capacity = capacity;
         self
     }
 }
@@ -53,6 +66,7 @@ impl<D: DecoderTrait, E: EncoderTrait> Transport for TcpTransport<D, E> {
             self.decoder.clone(),
             self.encoder.clone(),
             self.nodelay,
+            self.outbound_capacity,
             inbound_tx,
         ));
 
@@ -66,6 +80,7 @@ async fn run<D: DecoderTrait, E: EncoderTrait, C: Client>(
     decoder: D,
     encoder: E,
     nodelay: bool,
+    outbound_capacity: usize,
     inbound_tx: EventSender<D, E, C>,
 ) {
     let mut client_id = 1;
@@ -85,6 +100,7 @@ async fn run<D: DecoderTrait, E: EncoderTrait, C: Client>(
             address,
             decoder.clone(),
             encoder.clone(),
+            outbound_capacity,
             inbound_tx.clone(),
         )
         .start();

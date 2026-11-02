@@ -21,6 +21,7 @@ pub struct ClientHandler<D: DecoderTrait, E: EncoderTrait, C: Client> {
     address: SocketAddr,
     decoder: D,
     encoder: E,
+    outbound_capacity: usize,
     inbound_tx: EventSender<D, E, C>,
 }
 
@@ -31,6 +32,7 @@ impl<D: DecoderTrait, E: EncoderTrait, C: Client> ClientHandler<D, E, C> {
         address: SocketAddr,
         decoder: D,
         encoder: E,
+        outbound_capacity: usize,
         inbound_tx: EventSender<D, E, C>,
     ) -> Self {
         ClientHandler {
@@ -39,6 +41,7 @@ impl<D: DecoderTrait, E: EncoderTrait, C: Client> ClientHandler<D, E, C> {
             address,
             decoder,
             encoder,
+            outbound_capacity,
             inbound_tx,
         }
     }
@@ -55,7 +58,7 @@ impl<D: DecoderTrait, E: EncoderTrait, C: Client> ClientHandler<D, E, C> {
         let address = self.address;
         let inbound_tx = self.inbound_tx.clone();
 
-        let Some(mut outbound_rx) = Self::connect(&client, address, &inbound_tx).await else {
+        let Some(mut outbound_rx) = Self::connect(&client, address, self.outbound_capacity, &inbound_tx).await else {
             return;
         };
 
@@ -93,9 +96,10 @@ impl<D: DecoderTrait, E: EncoderTrait, C: Client> ClientHandler<D, E, C> {
     async fn connect(
         client: &C,
         address: SocketAddr,
+        outbound_capacity: usize,
         inbound_tx: &EventSender<D, E, C>,
     ) -> Option<Receiver<E::Outbound>> {
-        let (outbound_tx, outbound_rx) = channel(256);
+        let (outbound_tx, outbound_rx) = channel(outbound_capacity);
 
         inbound_tx
             .send(Event::Connected(client.clone(), address, outbound_tx))
